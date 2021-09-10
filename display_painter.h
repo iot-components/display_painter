@@ -11,8 +11,8 @@
 // WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
-#ifndef _BASIC_PAINTER_H
-#define _BASIC_PAINTER_H
+#ifndef _DISPLAY_PAINTER_H_
+#define _DISPLAY_PAINTER_H_
 
 #include "painter_fonts.h"
 
@@ -91,9 +91,6 @@ void painter_draw_char(int x, int y, char ascii_char, const font_t* font, uint16
  * @param color Color to display
  */
 void painter_draw_string(int x, int y, const char* text, const font_t* font, uint16_t color);
-
-
-void painter_printf(int x, int y, const char* text, const font_t* font, uint16_t color);
 
 /**
  * @brief Draw a number on screen
@@ -203,7 +200,6 @@ void painter_draw_circle(int x, int y, int radius, uint16_t color);
  * @param color Color to display
  */
 void painter_draw_filled_circle(int x, int y, int radius, uint16_t color);
-
 
 #ifdef __cplusplus
 }

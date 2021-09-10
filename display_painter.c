@@ -11,14 +11,16 @@
 // WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
-
-# include <stdlib.h>
+#include <stdlib.h>
+#include <stdarg.h>
 #include <string.h>
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
+#include "freertos/queue.h"
 #include "esp_log.h"
 #include "screen_driver.h"
-#include "basic_painter.h"
+#include "display_painter.h"
+#include "display_printf.h"
 
 static const char *TAG = "basic painter";
 
@@ -39,13 +41,22 @@ typedef struct {
 
 } painter_handle_t;
 
-static uint16_t g_point_color = COLOR_BLACK;
-static uint16_t g_back_color  = COLOR_WHITE;
+static uint16_t g_point_color = COLOR_WHITE;
+static uint16_t g_back_color  = COLOR_BLACK;
 static scr_driver_t g_lcd;
+static uint16_t g_screen_width;
+static uint16_t g_screen_height;
+static SemaphoreHandle_t s_log_mutex = NULL;
+static font_t s_font;
 
 esp_err_t painter_init(scr_driver_t *driver)
 {
     g_lcd = *driver;
+    scr_info_t info;
+    g_lcd.get_info(&info);
+    s_font = Font16;
+    g_screen_width = info.width;
+    g_screen_height = info.height;
     return ESP_OK;
 }
 
@@ -90,37 +101,41 @@ void painter_clear(uint16_t color)
 
 void painter_draw_char(int x, int y, char ascii_char, const font_t *font, uint16_t color)
 {
-    PAINTER_CHECK(NULL != g_lcd.init, "paint not initial");
     PAINTER_CHECK(ascii_char >= ' ', "ACSII code invalid");
     PAINTER_CHECK(NULL != font, "Font pointer invalid");
     int i, j;
-    int x0 = x;
     uint16_t char_size = font->Height * (font->Width / 8 + (font->Width % 8 ? 1 : 0));
     unsigned int char_offset = (ascii_char - ' ') * char_size;
     const unsigned char *ptr = &font->table[char_offset];
+    uint16_t buf[18 * 25];
+    PAINTER_CHECK(font->Height * font->Width * sizeof(uint16_t) <= sizeof(buf), "Font size is too large");
+    painter_set_point_color(color);
+    int ox = 0;
+    int oy = 0;
 
+    for (i = 0; i < font->Width * font->Height; i++) {
+        buf[i] = g_back_color;
+    }
     for (j = 0; j < char_size; j++) {
         uint8_t temp = ptr[j];
         for (i = 0; i < 8; i++) {
             if (temp & 0x80) {
-                g_lcd.draw_pixel(x, y, g_point_color);
-            } else {
-                g_lcd.draw_pixel(x, y, g_back_color);
+                buf[ox + (font->Width * oy)] = g_point_color;
             }
             temp <<= 1;
-            x++;
-            if ((x - x0) == font->Width) {
-                x = x0;
-                y++;
+            ox++;
+            if (ox == font->Width) {
+                ox = 0;
+                oy++;
                 break;
             }
         }
     }
+    g_lcd.draw_bitmap(x, y, font->Width, font->Height, buf);         // Draw NxN char
 }
 
 void painter_draw_string(int x, int y, const char *text, const font_t *font, uint16_t color)
 {
-    PAINTER_CHECK(NULL != g_lcd.init, "paint not initial");
     PAINTER_CHECK(NULL != text, "string pointer invalid");
     PAINTER_CHECK(NULL != font, "Font pointer invalid");
     const char *p_text = text;
@@ -150,10 +165,9 @@ void painter_draw_string(int x, int y, const char *text, const font_t *font, uin
 
 void painter_draw_num(int x, int y, uint32_t num, uint8_t len, const font_t *font, uint16_t color)
 {
-    PAINTER_CHECK(NULL != g_lcd.init, "paint not initial");
     PAINTER_CHECK(len < 10, "The length of the number is too long");
     PAINTER_CHECK(NULL != font, "Font pointer invalid");
-    char buf[10]={0};
+    char buf[10] = {0};
     int8_t num_len;
 
     itoa(num, buf, 10);
@@ -173,15 +187,14 @@ void painter_draw_num(int x, int y, uint32_t num, uint8_t len, const font_t *fon
 
 void painter_draw_image(int x, int y, int width, int height, uint16_t *img)
 {
-    PAINTER_CHECK(NULL != g_lcd.init, "paint not initial");
     PAINTER_CHECK(NULL != img, "Image pointer invalid");
     g_lcd.draw_bitmap(x, y, width, height, img);
 }
 
 void painter_draw_horizontal_line(int x, int y, int line_length, uint16_t color)
 {
-    PAINTER_CHECK(NULL != g_lcd.init, "paint not initial");
     int i;
+
     for (i = x; i < x + line_length; i++) {
         g_lcd.draw_pixel(i, y, color);
     }
@@ -189,8 +202,8 @@ void painter_draw_horizontal_line(int x, int y, int line_length, uint16_t color)
 
 void painter_draw_vertical_line(int x, int y, int line_length, uint16_t color)
 {
-    PAINTER_CHECK(NULL != g_lcd.init, "paint not initial");
     int i;
+
     for (i = y; i < y + line_length; i++) {
         g_lcd.draw_pixel(x, i, color);
     }
@@ -198,11 +211,10 @@ void painter_draw_vertical_line(int x, int y, int line_length, uint16_t color)
 
 void painter_draw_line(int x1, int y1, int x2, int y2, uint16_t color)
 {
-    PAINTER_CHECK(NULL != g_lcd.init, "paint not initial");
     uint16_t t;
     int xerr = 0, yerr = 0, delta_x, delta_y, distance;
     int incx, incy, uRow, uCol;
-    delta_x = x2 - x1; 
+    delta_x = x2 - x1;
     delta_y = y2 - y1;
     uRow = x1;
     uCol = y1;
@@ -250,7 +262,6 @@ void painter_draw_line(int x1, int y1, int x2, int y2, uint16_t color)
 
 void painter_draw_rectangle(int x0, int y0, int x1, int y1, uint16_t color)
 {
-    PAINTER_CHECK(NULL != g_lcd.init, "paint not initial");
     int min_x, min_y, max_x, max_y;
     min_x = x1 > x0 ? x0 : x1;
     max_x = x1 > x0 ? x1 : x0;
@@ -265,7 +276,6 @@ void painter_draw_rectangle(int x0, int y0, int x1, int y1, uint16_t color)
 
 void painter_draw_filled_rectangle(int x0, int y0, int x1, int y1, uint16_t color)
 {
-    PAINTER_CHECK(NULL != g_lcd.init, "paint not initial");
     int min_x, min_y, max_x, max_y;
     int i;
     min_x = x1 > x0 ? x0 : x1;
@@ -280,7 +290,6 @@ void painter_draw_filled_rectangle(int x0, int y0, int x1, int y1, uint16_t colo
 
 void painter_draw_circle(int x, int y, int radius, uint16_t color)
 {
-    PAINTER_CHECK(NULL != g_lcd.init, "paint not initial");
     /* Bresenham algorithm */
     int x_pos = -radius;
     int y_pos = 0;
@@ -310,7 +319,6 @@ void painter_draw_circle(int x, int y, int radius, uint16_t color)
 
 void painter_draw_filled_circle(int x, int y, int radius, uint16_t color)
 {
-    PAINTER_CHECK(NULL != g_lcd.init, "paint not initial");
     /* Bresenham algorithm */
     int x_pos = -radius;
     int y_pos = 0;
@@ -340,3 +348,115 @@ void painter_draw_filled_circle(int x, int y, int radius, uint16_t color)
     } while (x_pos <= 0);
 }
 
+static int s_height_current = 0; //current line on screen
+
+static inline void _display_printf_clear(void)
+{
+    if (xSemaphoreTake(s_log_mutex, portMAX_DELAY) != pdTRUE) {
+        ESP_LOGE(TAG, "clear failed");
+        return;
+    }
+    painter_clear(g_back_color);
+    s_height_current = 0;
+    xSemaphoreGive(s_log_mutex);
+}
+
+static void _display_printfv(display_level_t level, const char *tag, uint16_t color, const char *format, va_list args)
+{
+    if (unlikely(!s_log_mutex)) {
+        s_log_mutex = xSemaphoreCreateMutex();
+    }
+
+    if (xSemaphoreTake(s_log_mutex, DISPLAY_MAX_MUTEX_WAIT_MS / portTICK_RATE_MS) != pdTRUE) {
+        ESP_LOGW(tag, "display printf timeout");
+        return;
+    }
+    font_t font = s_font;
+    int height_step = font.Height;
+    uint32_t max_char_num = g_screen_width / font.Width;
+    char *msg = calloc(max_char_num + 1  , 1);
+    vsnprintf(msg, max_char_num, format, args);
+    if (s_height_current + height_step > g_screen_height) {
+        painter_clear(g_back_color);
+        s_height_current = 0;
+    }
+    painter_draw_string(0, s_height_current, msg, &font, color);
+    s_height_current += height_step;
+    xSemaphoreGive(s_log_mutex);
+    ESP_LOGI(tag, "%s", msg);
+    free(msg);
+}
+
+void display_printf_set_font(font_t font)
+{
+    if (unlikely(!s_log_mutex)) {
+        s_log_mutex = xSemaphoreCreateMutex();
+    }
+
+    if (xSemaphoreTake(s_log_mutex, portMAX_DELAY) != pdTRUE) {
+        ESP_LOGE(TAG, "font set failed");
+        return;
+    }
+    s_font = font;
+    xSemaphoreGive(s_log_mutex);
+}
+
+font_t display_printf_get_font()
+{
+    if (unlikely(!s_log_mutex)) {
+        s_log_mutex = xSemaphoreCreateMutex();
+    }
+
+    if (xSemaphoreTake(s_log_mutex, portMAX_DELAY) != pdTRUE) {
+        ESP_LOGE(TAG, "font set failed");
+        return s_font;
+    }
+    font_t font = s_font;
+    xSemaphoreGive(s_log_mutex);
+    return font;
+}
+
+void display_printf_clear(void)
+{
+    _display_printf_clear();
+}
+
+void display_printf(display_level_t level, const char *tag, uint16_t color, const char *format, ...)
+{
+    va_list list;
+    va_start(list, format);
+    _display_printfv(level, tag, color, format, list);
+    va_end(list);
+}
+
+void display_printf_line(const char *tag, uint16_t line, uint16_t color, const char *format, ...)
+{
+    if (unlikely(!s_log_mutex)) {
+        s_log_mutex = xSemaphoreCreateMutex();
+    }
+
+    if (xSemaphoreTake(s_log_mutex, DISPLAY_MAX_MUTEX_WAIT_MS / portTICK_RATE_MS) != pdTRUE) {
+        ESP_LOGW(tag, "display printf timeout");
+        return;
+    }
+
+    font_t font = s_font;
+    int height_step = font.Height;
+    int height_current = line * height_step;
+    if (height_current + height_step > g_screen_height) {
+        ESP_LOGE(tag, "display height overflow");
+        xSemaphoreGive(s_log_mutex);
+        return;
+    }
+
+    uint32_t max_char_num = g_screen_width / font.Width;
+    char *msg = calloc(max_char_num + 1  , 1);
+    va_list args;
+    va_start(args, format);
+    vsnprintf(msg, max_char_num, format, args);
+    va_end(args);
+    painter_draw_string(0, height_current, msg, &font, color);
+    xSemaphoreGive(s_log_mutex);
+    ESP_LOGI(tag, "%s", msg);
+    free(msg);
+}
