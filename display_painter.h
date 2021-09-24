@@ -15,6 +15,7 @@
 #define _DISPLAY_PAINTER_H_
 
 #include "painter_fonts.h"
+#include "qrcode.h"
 
 #ifdef __cplusplus
 extern "C" {
@@ -200,6 +201,19 @@ void painter_draw_circle(int x, int y, int radius, uint16_t color);
  * @param color Color to display
  */
 void painter_draw_filled_circle(int x, int y, int radius, uint16_t color);
+
+/**
+  * @brief  Displays QR Code on the console
+  *
+  * @param  qrcode  QR Code handle used by the display function.
+  */
+void painter_draw_qr_code_v10(esp_qrcode_handle_t qrcode);
+
+#define PAINTER_QRCODE_CONFIG_DEFAULT() (esp_qrcode_config_t) { \
+    .display_func = painter_draw_qr_code_v10, \
+    .max_qrcode_version = 10, \
+    .qrcode_ecc_level = ESP_QRCODE_ECC_LOW, \
+}
 
 #ifdef __cplusplus
 }

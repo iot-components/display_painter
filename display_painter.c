@@ -460,3 +460,36 @@ void display_printf_line(const char *tag, uint16_t line, uint16_t color, const c
     ESP_LOGI(tag, "%s", msg);
     free(msg);
 }
+
+void painter_draw_qr_code_v10(esp_qrcode_handle_t qrcode)
+{
+    esp_qrcode_print_console(qrcode);
+    painter_clear(COLOR_BLACK);
+    int size = esp_qrcode_get_size(qrcode);
+    int border = 2;
+#define draw_width_max 200
+#define draw_height_max 200
+#define buffer_width_max (draw_width_max / 21)
+#define buffer_height_max (draw_height_max / 21)
+    uint16_t buf_white[buffer_width_max * buffer_height_max] = {0};
+    uint16_t buf_black[buffer_width_max * buffer_height_max] = {0};
+    uint16_t *buf;
+
+    const uint16_t block_width = draw_width_max / size;
+    const uint16_t block_height = draw_height_max / size;
+
+    for (uint16_t i = 0; i < block_width * block_height; i++) {
+        buf_white[i] = COLOR_WHITE;
+        buf_black[i] = COLOR_BLACK;
+    }
+
+    for (int y = -border; y < size + border; y++) {
+        for (int x = -border; x < size + border; x++) {
+            buf = buf_black;
+            if (esp_qrcode_get_module(qrcode, x, y)) {
+                buf = buf_white;
+            }
+            g_lcd.draw_bitmap((x + border) * block_width, (y + border) * block_height, block_width, block_height, buf); 
+        }
+    }
+}
