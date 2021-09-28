@@ -449,15 +449,15 @@ void display_printf_line(const char *tag, uint16_t line, uint16_t color, const c
         return;
     }
 
-    uint32_t max_char_num = g_screen_width / font.Width;
-    char *msg = calloc(max_char_num + 1  , 1);
+    uint32_t max_char_num = g_screen_width / font.Width + 1;
+    char *msg = calloc(max_char_num, 1);
     va_list args;
     va_start(args, format);
     vsnprintf(msg, max_char_num, format, args);
     va_end(args);
     painter_draw_string(0, height_current, msg, &font, color);
     xSemaphoreGive(s_log_mutex);
-    ESP_LOGI(tag, "%s", msg);
+    ESP_LOGI(tag, "char_num=%d: %s", max_char_num, msg);
     free(msg);
 }
 
@@ -466,7 +466,8 @@ void painter_draw_qr_code_v10(esp_qrcode_handle_t qrcode)
     esp_qrcode_print_console(qrcode);
     painter_clear(COLOR_BLACK);
     int size = esp_qrcode_get_size(qrcode);
-    int border = 2;
+    int border_x = 2;
+    int border_y = 1;
 #define draw_width_max 200
 #define draw_height_max 200
 #define buffer_width_max (draw_width_max / 21)
@@ -477,19 +478,20 @@ void painter_draw_qr_code_v10(esp_qrcode_handle_t qrcode)
 
     const uint16_t block_width = draw_width_max / size;
     const uint16_t block_height = draw_height_max / size;
+    border_x = (36 + draw_width_max - block_width * size) / block_width / 2;
 
     for (uint16_t i = 0; i < block_width * block_height; i++) {
         buf_white[i] = COLOR_WHITE;
         buf_black[i] = COLOR_BLACK;
     }
 
-    for (int y = -border; y < size + border; y++) {
-        for (int x = -border; x < size + border; x++) {
+    for (int y = -border_y; y < size + border_y; y++) {
+        for (int x = -border_x; x < size + border_x; x++) {
             buf = buf_black;
             if (esp_qrcode_get_module(qrcode, x, y)) {
                 buf = buf_white;
             }
-            g_lcd.draw_bitmap((x + border) * block_width, (y + border) * block_height, block_width, block_height, buf); 
+            g_lcd.draw_bitmap((x + border_x) * block_width, (y + border_y) * block_height, block_width, block_height, buf); 
         }
     }
 }
